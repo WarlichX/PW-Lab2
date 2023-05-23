@@ -1,0 +1,122 @@
+#!/usr/bin/env node
+
+const https = require('https');
+const querystring = require('querystring');
+const axios = require('axios');
+
+function makeRequest(url, maxRedirects = 5) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        if (maxRedirects === 0) {
+          reject(new Error('Too many redirects'));
+          return;
+        }
+
+        const redirectUrl = new URL(response.headers.location, url);
+        resolve(makeRequest(redirectUrl.href, maxRedirects - 1));
+      } else {
+        let body = '';
+
+        response.on('data', (data) => {
+          body += data;
+        });
+
+        response.on('end', () => {
+          resolve(body);
+        });
+      }
+    });
+
+    request.on('error', (error) => {
+      reject(error);
+    });
+  });
+}
+
+
+
+function search(searchTerm) {
+  const apiUrl = 'https://api.duckduckgo.com/';
+  const params = {
+    q: searchTerm,
+    format: 'json',
+    no_html: '1',
+  };
+
+  return axios.get(apiUrl, { params })
+    .then((response) => {
+      const data = response.data;
+
+      const results = [];
+
+      if (data.RelatedTopics) {
+        results.push(...data.RelatedTopics);
+      }
+
+      if (data.Results) {
+        results.push(...data.Results);
+      }
+
+      if (results.length === 0) {
+        return [];
+      }
+
+      return results.slice(0, 10).map((result) => ({
+        title: result.Text || '',
+        url: result.FirstURL || '',
+        description: result.Result || result.Text || '',
+      }));
+    });
+}
+
+function printResponse(response) {
+  // Remove HTML tags from the response and print the result
+  const cleanedResponse = response.replace(/<[^>]*>/g, '');
+  console.log(cleanedResponse);
+}
+
+function main() {
+  const args = process.argv.slice(2);
+
+  if (args.length === 0 || args[0] === '-h') {
+    console.log('Usage:');
+    console.log('  go2web -u <URL>         # make an HTTP request to the specified URL and print the response');
+    console.log('  go2web -s <search-term> # make an HTTP request to search the term using your favorite search engine and print top 10 results');
+    return;
+  }
+
+  if (args[0] === '-u') {
+    const url = args[1];
+    makeRequest(url)
+      .then((response) => {
+        printResponse(response);
+      })
+      .catch((error) => {
+        console.error('An error occurred:', error);
+      });
+  } else if (args[0] === '-s') {
+    const searchTerm = args.slice(1).join(' ');
+    search(searchTerm)
+      .then((results) => {
+        if (results.length === 0) {
+          console.log('No results found.');
+        } else {
+          results.forEach((result, index) => {
+            console.log(`Result ${index + 1}:`);
+            console.log(`Title: ${result.title}`);
+            console.log(`URL: ${result.url}`);
+            console.log(`Description: ${result.description}`);
+            console.log();
+          });
+        }
+      })
+      .catch((error) => {
+        console.error('An error occurred:', error);
+      });
+  } else {
+    console.log('Invalid option. Use -h to see the available options.');
+  }
+}
+
+main();
